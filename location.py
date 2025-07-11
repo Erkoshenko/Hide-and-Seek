@@ -5,7 +5,7 @@ import requests
 import os
 
 # == НАСТРОЙКИ ==
-FASTAPI_HOST = "http://127.0.0.1:8000"
+FASTAPI_HOST = "https://hide-and-seek-gz7u.onrender.com"
 CONFIRM_URL = f"{FASTAPI_HOST}/confirm"
 LOCATION_URL = f"{FASTAPI_HOST}/location"
 
