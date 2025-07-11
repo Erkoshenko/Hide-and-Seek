@@ -41,9 +41,6 @@ async def lifespan(app: FastAPI):
     finally:
         if location_task: location_task.cancel()
         if timer_task: timer_task.cancel()
-        polling.cancel()
-        try: await polling
-        except asyncio.CancelledError: pass
 
 app = FastAPI(lifespan=lifespan)
 
