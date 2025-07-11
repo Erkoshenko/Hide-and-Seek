@@ -167,6 +167,7 @@ async def game_start(message: Message):
     await r.set("game_started", "1")
     timer = int(await r.get("game_timer") or default_timer)
     waves = await r.hgetall("waves") or {str(k): v for k, v in wave_intervals.items()}
+    await r.set("current_wave", "1")
     seeker_id = await r.srandmember("players")
     await r.set("seeker", seeker_id)
     await r.hset(f"player:{seeker_id}", "role", "seeker")
@@ -179,7 +180,6 @@ async def game_start(message: Message):
                 await bot.send_message(pid, "🔪 Ты искатель. Пиши /kill <код>!", parse_mode="HTML")
             except:
             	await remove(pid)
-            	await check_game_end()
             
             role = "искатель 🔪"
         else:
@@ -188,7 +188,6 @@ async def game_start(message: Message):
                 await bot.send_message(pid, f"🏃 Ты прячущийся!\nВот твой килл код: <code>{info['kill_code']}</code>", parse_mode="HTML")
             except:
             	await remove(pid)
-            	await check_game_end()
             	
             role = "прячущийся 🏃"
         text += f"<b>{info['first_name']}</b>: {role}\n"
@@ -234,7 +233,6 @@ async def kill_cmd(message: Message, command: CommandObject):
         return
     await remove(target)
     await bot.send_message(chat_id, f"🔪 Игрок <b>{info['first_name']}</b> пойман!", parse_mode="HTML")
-    await check_game_end()
 
 @dp.message(Command("game_cancel"))
 @admin_only
@@ -300,7 +298,7 @@ async def game_timer(seconds):
     	if seconds_left <= 0:
     		break
     	try:
-    		await bot.edit_message_text(text, chat_id=chat_id, message_id=msg.message_id)
+    		msg = await bot.edit_message_text(text, chat_id=chat_id, message_id=msg.message_id)
     	except:
     		await bot.send_message(chat_id, text)
     	
@@ -343,7 +341,6 @@ async def send_locations(waves, total_seconds):
             last = float(info.get("last", 0))
             if now - last > 120:
                 await remove(pid)
-                await check_game_end()
                 continue
 
             lat, lon = info.get("lat"), info.get("lon")
@@ -364,6 +361,8 @@ async def remove(pid):
     await r.srem("all_kill_codes", player['kill_code'])
     await r.delete(f"player:{pid}")
     await r.delete(f"confirm:{pid}")
+    
+    await check_game_end()
 
 
 if __name__ == "__main__":
@@ -371,4 +370,3 @@ if __name__ == "__main__":
     import os
     
     uvicorn.run("main:app", host="0.0.0.0", port=os.environ.get("PORT", 5000))
-    
