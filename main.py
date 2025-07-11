@@ -131,8 +131,9 @@ async def confirm(user_id: int, code: int):
     if not conf or str(conf["code"]) != str(code):
         raise HTTPException(400, detail="❌ Код неверный.")
     if await r.sismember("players", user_id):
-	token = await r.hget(f"player:{user_id}", "token")
-        return {"status": "ok", "token": token}
+    	token = await r.hget(f"player:{user_id}", "token")
+    	return {"status": "ok", "token": token}
+    	
     pid = await r.incr("player_id")
     while True:
     	kill_code = random.randint(100000, 999999)
@@ -373,3 +374,4 @@ if __name__ == "__main__":
     import os
     
     uvicorn.run("main:app", host="0.0.0.0", port=os.environ.get("PORT", 5000))
+    
