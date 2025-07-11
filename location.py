@@ -33,6 +33,7 @@ def input_auth():
     if response.status_code != 200:
         print("❌ Ошибка подтверждения:", response.text)
         return None
+    print(response.json())
 
     token = response.json()["token"]
     print("✅ Авторизация успешна.")
