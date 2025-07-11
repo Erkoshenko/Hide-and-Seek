@@ -21,7 +21,7 @@ admin_ids = [5415079744]  # Впишите ID админов
 
 # Webhook
 WEBHOOK_PATH = "/webhook"
-WEBHOOK_URL = f"https://renderon.com{WEBHOOK_PATH}"
+WEBHOOK_URL = f"https://https://hide-and-seek-gz7u.onrender.com{WEBHOOK_PATH}"
 
 # Настройки игры
 default_timer = 600  # 5 минут
@@ -46,6 +46,10 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError: pass
 
 app = FastAPI(lifespan=lifespan)
+
+@app.get("/ping")
+async def ping():
+	return "pong"
 
 @app.post(WEBHOOK_PATH)
 async def telegram_webhook(update: dict):
@@ -100,6 +104,7 @@ async def set_wave_cmd(message: Message, command: CommandObject):
         return
     await r.hset("waves", str(wave), sec)
     await message.reply(f"🌊 Волна {wave} теперь каждые {sec} сек.")
+
 
 @dp.message(Command("reg"))
 async def reg_user(message: Message):
