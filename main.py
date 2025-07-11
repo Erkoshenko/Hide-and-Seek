@@ -21,7 +21,7 @@ admin_ids = [5415079744]  # Впишите ID админов
 
 # Webhook
 WEBHOOK_PATH = "/webhook"
-WEBHOOK_URL = f"https://https://hide-and-seek-gz7u.onrender.com{WEBHOOK_PATH}"
+WEBHOOK_URL = f"https://hide-and-seek-gz7u.onrender.com{WEBHOOK_PATH}"
 
 # Настройки игры
 default_timer = 600  # 5 минут
