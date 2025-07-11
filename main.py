@@ -12,7 +12,7 @@ import random
 import redis
 
 # Redis
-r = redis.asyncio.from_url("", decode_responses=True)
+r = redis.asyncio.from_url("redis://red-d1o905ruibrs73cf7km0:6379", decode_responses=True)
 
 # Telegram
 TOKEN = "8134083101:AAFcVKlE-3bVSI_68rihZWkWPFRY4EJKu7E"
