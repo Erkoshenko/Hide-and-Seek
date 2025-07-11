@@ -178,7 +178,8 @@ async def game_start(message: Message):
         if pid == seeker_id:
             try:
                 await bot.send_message(pid, "🔪 Ты искатель. Пиши /kill <код>!", parse_mode="HTML")
-            except:
+            except Exception as e:
+            	await bot.send_message(chat_id, e)
             	await remove(pid)
             
             role = "искатель 🔪"
@@ -299,8 +300,8 @@ async def game_timer(seconds):
     		break
     	try:
     		msg = await bot.edit_message_text(text, chat_id=chat_id, message_id=msg.message_id)
-    	except:
-    		await bot.send_message(chat_id, text)
+    	except Exception as e:
+    		await bot.send_message(chat_id, f"text\n\n{e}")
     	
     	await asyncio.sleep(1)
     	
