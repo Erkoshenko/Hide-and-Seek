@@ -27,7 +27,7 @@ def input_auth():
     # Отправка запроса на подтверждение
     response = requests.get(CONFIRM_URL, params={
         "user_id": user_id,
-        "confirm_code": confirm_code
+        "code": confirm_code
     })
 
     if response.status_code != 200:
@@ -49,14 +49,13 @@ def main():
     user_id = auth["user_id"]
     token = auth["token"]
 
-    print("🚀 Запуск отправки локации...")
     while True:
         try:
             loc = get_location()
             lat = loc["latitude"]
             lon = loc["longitude"]
 
-            print(f"📍 Отправка: {lat}, {lon}")
+            
             res = requests.get(LOCATION_URL, params={
                 "user_id": user_id,
                 "token": token,
