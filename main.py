@@ -1,38 +1,73 @@
-from fastapi import FastAPI, HTTPException, Request from aiogram import Bot, Dispatcher, types, F from aiogram.filters import CommandObject, Command from aiogram.enums import ParseMode from aiogram.types import Message from contextlib import asynccontextmanager from functools import wraps import asyncio import uuid import time import random import redis import logging
+from fastapi import FastAPI, HTTPException
+from aiogram import Bot, Dispatcher, types, F
+from aiogram.filters import CommandObject, Command
+from aiogram.enums import ParseMode
+from aiogram.types import Message
+from contextlib import asynccontextmanager
+from functools import wraps
+import asyncio
+import uuid
+import time
+import random
+import redis
 
-Логирование
-
-logging.basicConfig( level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(name)s - %(message)s" ) logger = logging.getLogger(name)
-
-Redis
-
+# Redis
 r = redis.asyncio.from_url("redis://red-d1o905ruibrs73cf7km0:6379", decode_responses=True)
 
-Telegram
+# Telegram
+TOKEN = "8134083101:AAFcVKlE-3bVSI_68rihZWkWPFRY4EJKu7E"
+chat_id = -1002806306845  # Группа
+admin_ids = [5415079744]  # Впишите ID админов
 
-TOKEN = "8134083101:AAFcVKlE-3bVSI_68rihZWkWPFRY4EJKu7E" chat_id = -1002806306845  # Группа admin_ids = [5415079744]  # Впишите ID админов
+# Webhook
+WEBHOOK_PATH = "/webhook"
+WEBHOOK_URL = f"https://hide-and-seek-gz7u.onrender.com{WEBHOOK_PATH}"
 
-Webhook
+# Настройки игры
+default_timer = 600  # 5 минут
+wave_intervals = {1: 20, 2: 60, 3: 30}
 
-WEBHOOK_PATH = "/webhook" WEBHOOK_URL = f"https://hide-and-seek-gz7u.onrender.com{WEBHOOK_PATH}"
+bot = Bot(token=TOKEN)
+dp = Dispatcher()
+location_task = None
+timer_task = None
 
-Настройки игры
-
-default_timer = 600  # 5 минут wave_intervals = {1: 20, 2: 60, 3: 30}
-
-bot = Bot(token=TOKEN) dp = Dispatcher() location_task = None timer_task = None
-
-@asynccontextmanager async def lifespan(app: FastAPI): global location_task, timer_task logger.info("Запуск lifespan, установка webhook...") await bot.set_webhook(WEBHOOK_URL) try: yield finally: logger.info("Выключение приложения, остановка задач") if location_task: location_task.cancel() if timer_task: timer_task.cancel()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global location_task, timer_task
+    await bot.set_webhook(WEBHOOK_URL)
+    try:
+        yield
+    finally:
+        if location_task: location_task.cancel()
+        if timer_task: timer_task.cancel()
 
 app = FastAPI(lifespan=lifespan)
 
-@app.middleware("http") async def log_requests(request: Request, call_next): logger.info(f"📥 {request.method} {request.url}") response = await call_next(request) logger.info(f"📤 Ответ: {response.status_code}") return response
+@app.get("/ping")
+async def ping():
+	return "pong"
 
-@app.get("/ping") async def ping(): logger.debug("Получен запрос /ping") return "pong"
+@app.post(WEBHOOK_PATH)
+async def telegram_webhook(update: dict):
+    telegram_update = types.Update(**update)
+    await dp.feed_update(bot, telegram_update)
+    return {"ok": True}
 
-@app.post(WEBHOOK_PATH) async def telegram_webhook(update: dict): logger.debug(f"Webhook получен: {
+def admin_only(func):
+    @wraps(func)
+    async def wrapper(*args, **kwargs):
+        # Ищем объект Message в аргументах
+        message = None
+        for arg in args:
+            if isinstance(arg, Message):
+                message = arg
+                break
+        if not message:
+            message = kwargs.get("message")
 
-wer("❌ У тебя нет прав.")
+        if message and message.from_user.id not in admin_ids:
+            await message.answer("❌ У тебя нет прав.")
             return
 
         return await func(*args, **kwargs)
@@ -260,7 +295,7 @@ async def game_timer(seconds):
     	seconds_left = seconds - int(elapsed)
     	
     	wave = await r.get("current_wave")
-    	text = f"🌊 {wave} волна!\n⏳ Осталось {seconds_left} сек."
+    	text = f"🌊 {wave} волна!\n⏳ Осталось {seconds} сек."
     	if seconds_left <= 0:
     		break
     	try:
