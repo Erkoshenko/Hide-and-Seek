@@ -22,25 +22,28 @@ admin_ids = [5415079744]  # Впишите ID админов
 # Webhook
 WEBHOOK_PATH = "/webhook"
 WEBHOOK_URL = f"https://hide-and-seek-gz7u.onrender.com{WEBHOOK_PATH}"
-
 # Настройки игры
 default_timer = 600  # 5 минут
 wave_intervals = {1: 20, 2: 60, 3: 30}
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
+
 location_task = None
 timer_task = None
+monitor_task = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global location_task, timer_task
+    global location_task, timer_task, monitor_task
     await bot.set_webhook(WEBHOOK_URL)
     try:
         yield
     finally:
         if location_task: location_task.cancel()
         if timer_task: timer_task.cancel()
+        if monitor_task: monitor_task.cancel()
+        
 
 app = FastAPI(lifespan=lifespan)
 
@@ -84,6 +87,19 @@ async def set_timer_cmd(message: Message, command: CommandObject):
         return
     await r.set("game_timer", int(command.args))
     await message.reply(f"⏳ Таймер установлен на {command.args} сек.")
+
+@dp.message(Command("set_seekers"))
+@admin_only
+async def set_seekers_cmd(message: Message, command: CommandObject):
+    if not command.args or not command.args.isdigit():
+        await message.reply("❗ Используй: /set_seekers <кол-во>")
+        return
+    count = int(command.args)
+    if count < 1:
+        await message.reply("❗ Должен быть хотя бы 1 искатель.")
+        return
+    await r.set("seekers_count", count)
+    await message.reply(f"🔢 Количество искателей установлено: {count}")
 
 @dp.message(Command("set_wave"))
 @admin_only
@@ -156,213 +172,208 @@ async def location(user_id: int, token: str, lat: float, lon: float):
 @dp.message(Command("game_start"))
 @admin_only
 async def game_start(message: Message):
-    global location_task, timer_task
     if await r.get("game_started") == "1":
         await message.reply("⚠️ Игра уже запущена.")
         return
-    players = await r.smembers("players")
-    if len(players) < 2:
-        await message.reply("⚠️ Мин. 2 игрока")
-        return
-    await r.set("game_started", "1")
-    timer = int(await r.get("game_timer") or default_timer)
-    waves = await r.hgetall("waves") or {str(k): v for k, v in wave_intervals.items()}
-    await r.set("current_wave", "1")
-    seeker_id = await r.srandmember("players")
-    await r.set("seeker", seeker_id)
-    await r.hset(f"player:{seeker_id}", "role", "seeker")
-    text = "👥 Игроки:\n\n"
-    
-    for pid in players:
-        info = await r.hgetall(f"player:{pid}")
-        if pid == seeker_id:
-            try:
-                await bot.send_message(pid, "🔪 Ты искатель. Пиши /kill <код>!", parse_mode="HTML")
-            except Exception as e:
-            	await bot.send_message(chat_id, e)
-            	await remove(pid)
-            
-            role = "искатель 🔪"
-        else:
-            await r.hset(f"player:{pid}", "role", "hider")
-            try:
-                await bot.send_message(pid, f"🏃 Ты прячущийся!\nВот твой килл код: <code>{info['kill_code']}</code>", parse_mode="HTML")
-            except:
-            	await remove(pid)
-            	
-            role = "прячущийся 🏃"
-        text += f"<b>{info['first_name']}</b>: {role}\n"
-        
-    await bot.send_message(chat_id, text, parse_mode="HTML")
-    await asyncio.sleep(60)
-    location_task = asyncio.create_task(send_locations(waves, timer))
-    timer_task = asyncio.create_task(game_timer(timer))
 
-@dp.message(Command("mycode"))
-async def show_my_code(message: Message):
-    if not await r.get("game_started") == "1":
-        await message.reply("⚠️ Игра не началась.")
+    players = list(await r.smembers("players"))
+    if len(players) < 2:
+        await message.answer("❗ Нужно минимум 2 игрока.")
         return
-    info = await r.hgetall(f"player:{message.from_user.id}")
-    kill_code = info.get("kill_code", "❌ Не найден")
-    await message.reply(f"🔑 Твой килл код: <code>{kill_code}</code>", parse_mode="HTML")
+
+    seekers_count = int(await r.get("seekers_count") or 1)
+    seekers = random.sample(players, min(seekers_count, len(players)))
+    await r.delete("seekers")
+    for sid in seekers:
+        await r.sadd("seekers", sid)
+        await r.set(f"seeker_tries:{sid}", 0)
+
+    await r.set("game_started", "1")
+
+    text = "Вот роли игроков 👀:\n\n"
+
+    for pid in players:
+        role = "seeker" if pid in seekers else "hider"
+        await r.hset(f"player:{pid}", "role", role)
+        player_info = await r.hgetall(f"player:{pid}")
+        if role == "seeker":
+            text += f"Игрок {player_info['first_name']} — <b>ИСКАТЕЛЬ</b> 🔪!\n"
+            try:
+                await bot.send_message(pid, "🕵️ Ты — ИСКАТЕЛЬ! Лови их через /kill <код>")
+            except:
+                pass
+        else:
+            text += f"Игрок {player_info['first_name']} — <b>ПРЯЧУЩИЙСЯ</b> 🏃!\n"
+            try:
+                code = await r.hget(f"player:{pid}", "kill_code")
+                await bot.send_message(pid, f"🙈 Ты — ПРЯЧУЩИЙСЯ!\n🔐 Твой kill-код: <code>{code}</code>", parse_mode="HTML")
+            except:
+                pass
+
+    await bot.send_message(chat_id, text, parse_mode=ParseMode.HTML)
+
+    await asyncio.sleep(10)
+
+    timer = int(await r.get("game_timer") or default_timer)
+    waves = await r.hgetall("waves")
+    for i in [1, 2, 3]:
+        if str(i) not in waves:
+            await r.hset("waves", str(i), wave_intervals[i])
+
+    global timer_task, location_task, monitor_task
+    timer_task = asyncio.create_task(game_timer(timer))
+    location_task = asyncio.create_task(send_locations(timer))
+    monitor_task = asyncio.create_task(location_monitor())
+
+    await message.reply("👀 Игра началась!")
 
 @dp.message(Command("kill"))
 async def kill_cmd(message: Message, command: CommandObject):
-    user_id = str(message.from_user.id)
-    if user_id != await r.get("seeker"):
-        await message.reply("❌ Только искатель может!")
+    if await r.get("game_started") != "1":
+        await message.reply("⚠️ Игра не идёт.")
         return
-    args = command.args
-    if not args:
-        await message.reply("❗ /kill <код>")
+    if not await r.sismember("seekers", str(message.from_user.id)):
+        await message.reply("❌ Только искатель может использовать эту команду.")
         return
-    attempts = int(await r.get(f"seeker_tries:{user_id}") or 0)
-    if attempts >= 3:
-        await message.reply("☠️ Ты проиграл! Больше 3 ошибок.")
-        await stop_game(f"<b>Искатель</b> проиграл по попыткам.")
+    if not command.args or not command.args.isdigit():
+        await message.reply("❗ Используй: /kill <код>")
         return
-    target = None
+
+    kill_code = command.args.strip()
+    for user_id in await r.smembers("players"):
+        info = await r.hgetall(f"player:{user_id}")
+        if info.get("role") == "hider" and info.get("kill_code") == kill_code:
+            await r.srem("players", user_id)
+            await bot.send_message(user_id, "❌ Ты пойман искателем!")
+            try:
+                await bot.send_message(chat_id, f"✅ Игрок {info['first_name']} пойман искателем {message.from_user.first_name}!")
+            except Exception as e:
+                await bot.send_message(chat_id, f"Ошибка отправки: {e}")
+            await check_game_end()
+            return
+
+    tries_key = f"seeker_tries:{message.from_user.id}"
+    tries = int(await r.get(tries_key) or 0) + 1
+    await r.set(tries_key, tries)
+    await message.reply(f"❌ Неверный код! ({tries}/3)")
+
+    if tries >= 3:
+        await stop_game(f"😵 Искатель {message.from_user.first_name} ошибся 3 раза — проиграл!")
+
+async def game_timer(seconds: int):
+    start = time.time()
+    end = start + seconds
+    await r.set("game_started", "1")
+    while time.time() < end:
+        remain = int(end - time.time())
+        if remain % 30 == 0:
+            await bot.send_message(chat_id, f"⏳ Осталось: {remain} сек.")
+        await asyncio.sleep(1)
+    await stop_game("⏱️ Время вышло! Прячущиеся победили!")
+
+async def send_locations(total_seconds):
+    players = list(await r.smembers("players"))
+    waves = {int(k): int(v) for k, v in (await r.hgetall("waves")).items()}
+    timestamps = {1: 0, 2: int(total_seconds * 0.5), 3: int(total_seconds * 0.75)}
+    started = time.time()
+
+    while True:
+        elapsed = int(time.time() - started)
+        percent = (elapsed / total_seconds) * 100
+
+        for wave, start_at in timestamps.items():
+            if elapsed >= start_at:
+                for user_id in players:
+                    data = await r.hgetall(f"player:{user_id}")
+                    if data.get("role") != "hider":
+                        continue
+                    last = float(data.get("last") or 0)
+                    if time.time() - last > 120:
+                        await remove(user_id)
+                        continue
+                    if "lat" in data and "lon" in data:
+                        await bot.send_location(chat_id=chat_id, latitude=float(data['lat']), longitude=float(data['lon']))
+                        await bot.send_message(chat_id, f"📍 Геопозиция игрока {data['first_name']} обновлена.")
+                        
+
+                await asyncio.sleep(waves[wave])
+
+async def location_monitor():
+    while await r.get("game_started") == "1":
+        players = list(await r.smembers("players"))
+        for user_id in players:
+            data = await r.hgetall(f"player:{user_id}")
+            if data.get("role") != "hider":
+                continue
+            last = float(data.get("last") or 0)
+            if time.time() - last > 120:
+                await remove(user_id)
+        await asyncio.sleep(10)
+
+
+async def check_game_end():
+    hiders_left = 0
     for pid in await r.smembers("players"):
         info = await r.hgetall(f"player:{pid}")
-        if info.get("kill_code") == args.strip():
-            target = pid
-            break
-    if not target:
-        await r.incr(f"seeker_tries:{user_id}")
-        await message.reply("❌ Неверный код.")
-        return
-    await remove(target)
-    await bot.send_message(chat_id, f"🔪 Игрок <b>{info['first_name']}</b> пойман!", parse_mode="HTML")
+        if info.get("role") == "hider":
+            hiders_left += 1
+    if hiders_left == 0:
+        await stop_game("🔪 Искатель победил! Все пойманы.")
+
+async def stop_game(reason: str):
+    global timer_task, location_task, monitor_task
+    if timer_task: timer_task.cancel()
+    if location_task: location_task.cancel()
+    if monitor_task: monitor_task.cancel()
+
+    await bot.send_message(chat_id, f"🔚 Игра окончена!\n{reason}")
+
+    # Удаление всех попыток искателей и сам список
+    seekers = await r.smembers("seekers")
+    for sid in seekers:
+        await r.delete(f"seeker_tries:{sid}")
+    await r.delete("seekers")
+
+    await r.set("game_started", "0")
+    await r.delete("game_timer")
+    await r.delete("waves")
+    await r.delete("waves_percent")
+
+    # Удалить игроков
+    for pid in await r.smembers("players"):
+        await r.delete(f"player:{pid}")
+    await r.delete("players")
+    await r.delete("all_kill_codes")
+
+    # Очистка подтверждений
+    for key in await r.keys("confirm:*"):
+        await r.delete(key)
+
+    # Сбросить счётчик player_id
+    await r.set("player_id", 0)
 
 @dp.message(Command("game_cancel"))
 @admin_only
 async def game_cancel(message: Message):
     await stop_game("🧹 Игра остановлена админом.")
     
-async def check_game_end():
+@dp.message(Command("mycode"))
+async def show_my_code(message: Message):
     if not await r.get("game_started") == "1":
-    	return
-    	
-    players = await r.smembers("players")
-    hiders = 0
-    seeker_exists = False
-
-    for pid in players:
-        info = await r.hgetall(f"player:{pid}")
-        role = info.get("role")
-        if role == "hider":
-            hiders += 1
-        elif role == "seeker":
-            seeker_exists = True
-
-    if hiders == 0 and seeker_exists:
-        await stop_game("🔪 Искатель победил! Все прячущиеся пойманы.")
-        return True
-    elif hiders > 0 and not seeker_exists:
-        await stop_game("🏃 Прячущиеся победили! Искатель исчез.")
-        return True
-
-    return False
-    
-
-async def stop_game(reason):
-    global location_task, timer_task
-    if location_task: location_task.cancel()
-    if timer_task: timer_task.cancel()
-    await r.set("game_started", "0")
-    for pid in await r.smembers("players"):
-        await remove(pid)
-        
-    await r.delete("players")
-    await r.delete("player_id")
-    for key in await r.keys("seeker_tries:*"):
-    	await r.delete(key)
-    for key in await r.keys("confirm:*"):
-    	await r.delete(key)
-    await r.delete("seeker")  # чтобы не остался
-    await r.delete("game_timer")
-    await r.delete("waves")
-    await bot.send_message(chat_id, reason, parse_mode="HTML")
-
-async def game_timer(seconds):
-    start_time = time.time()
-    
-    msg = await bot.send_message(chat_id, f"🌊 1 волна!\n⏳ Осталось {seconds} сек.")
-    await bot.pin_chat_message(chat_id, msg.message_id)
-    while True:
-    	elapsed = time.time() - start_time
-    	seconds_left = seconds - int(elapsed)
-    	
-    	wave = await r.get("current_wave")
-    	text = f"🌊 {wave} волна!\n⏳ Осталось {seconds} сек."
-    	if seconds_left <= 0:
-    		break
-    	try:
-    		msg = await bot.edit_message_text(text, chat_id=chat_id, message_id=msg.message_id)
-    	except Exception as e:
-    		await bot.send_message(chat_id, f"text\n\n{e}")
-    	
-    	await asyncio.sleep(1)
-    	
-    try:
-    	await msg.delete()
-    except:
-    	pass
-    await stop_game("⌛ Время вышло. Прячущиеся победили!")
-
-async def send_locations(waves, total_seconds):
-    wave_percents = await r.hgetall("waves_percent")
-    wave_percents = {
-        2: int(wave_percents.get("2", 30)),
-        3: int(wave_percents.get("3", 70)),
-    }
-    wave_percents = dict(sorted(wave_percents.items(), key=lambda x: x[1]))
-    start_time = time.time()
-    current_wave = "1"
-
-    while True:
-        elapsed = time.time() - start_time
-        percent_passed = (elapsed / total_seconds) * 100
-
-        # Определяем текущую волну по проценту
-        for wave, percent in wave_percents.items():
-            if percent_passed >= percent:
-                current_wave = str(wave)
-                await r.set("current_wave", current_wave)
-
-        interval = int(waves.get(current_wave, 60))
-
-        players = await r.smembers("players")
-        now = time.time()
-        for pid in players:
-            info = await r.hgetall(f"player:{pid}")
-            if info.get("role") == "seeker":
-                continue
-            last = float(info.get("last", 0))
-            if now - last > 120:
-                await remove(pid)
-                continue
-
-            lat, lon = info.get("lat"), info.get("lon")
-            if lat and lon:
-                try:
-                    await bot.send_location(chat_id, latitude=float(lat), longitude=float(lon))
-                except: pass
-
-        if not players:
-            await bot.send_message(chat_id, "🏁 Все игроки выбыли.")
-            return
-
-        await asyncio.sleep(interval)
+        await message.reply("⚠️ Игра не началась.")
+        return
+    info = await r.hgetall(f"player:{message.from_user.id}")
+    if not info or info.get("role") != "hider":
+        await message.reply("❌ Ты не прячущийся.")
+        return
+    kill_code = info.get("kill_code", "❌ Не найден")
+    await message.reply(f"🔑 Твой kill-код: <code>{kill_code}</code>", parse_mode="HTML")
 
 async def remove(pid):
-    player = await r.hgetall(f"player:{pid}")
+    info = await r.hgetall(f"player:{pid}")
+    await bot.send_message(chat_id, f"🚫 Игрок {info['first_name']} выбыл (не отправил геолокацию).")
     await r.srem("players", pid)
-    await r.srem("all_kill_codes", player['kill_code'])
     await r.delete(f"player:{pid}")
-    await r.delete(f"confirm:{pid}")
-    
     await check_game_end()
 
 
@@ -370,4 +381,4 @@ if __name__ == "__main__":
     import uvicorn
     import os
     
-    uvicorn.run("main:app", host="0.0.0.0", port=os.environ.get("PORT", 5000))
+    uvicorn.run("main:app", host="0.0.0.0", port=os.environ.get("PORT", 8000))
