@@ -360,3 +360,10 @@ async def remove(pid):
     await r.srem("all_kill_codes", player['kill_code'])
     await r.delete(f"player:{pid}")
     await r.delete(f"confirm:{pid}")
+
+
+if __name__ == "__main__":
+    import uvicorn
+    import os
+    
+    uvicorn.run("main:app", host="0.0.0.0", port=os.environ.get("PORT", 5000))
