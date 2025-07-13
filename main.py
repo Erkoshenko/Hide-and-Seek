@@ -288,7 +288,7 @@ async def send_locations(total_seconds):
                     if data.get("role") != "hider":
                         continue
                     last = float(data.get("last") or 0)
-                    if time.time() - last > 120:
+                    if time.time() - last > 60:
                         await remove(user_id)
                         continue
                     if "lat" in data and "lon" in data:
